@@ -1,0 +1,19 @@
+name: geo
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pyproj>=3.7
+  - shapely>=2.0
+  - fiona>=1.10
+  - lxml>=5.0
+  - gdal>=3.8
+  - libspatialite>=5.0
+  - tippecanoe>=2.0
+  - click>=8.0
+  - pip:
+      - xmltodict>=1.0
+      - pmtiles>=3.7
+      - tqdm>=4.0
+      - geojson>=3.0

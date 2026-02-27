@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Cadastral Viewer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css">
+  <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/pmtiles@3/dist/pmtiles.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; font-family: sans-serif; }
+    #map { width: 100%; height: 100%; }
+    #popup {
+      position: absolute;
+      top: 10px; right: 10px;
+      background: white;
+      border-radius: 6px;
+      padding: 12px 14px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.25);
+      font-size: 13px;
+      min-width: 200px;
+      max-width: 280px;
+      display: none;
+    }
+    #popup-warning {
+      display: none;
+      background: #fff3e0;
+      border-left: 3px solid #ff6f00;
+      padding: 4px 8px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      color: #e65100;
+      border-radius: 2px;
+    }
+    #popup h3 { margin-bottom: 8px; font-size: 15px; color: #333; }
+    #popup table { border-collapse: collapse; width: 100%; }
+    #popup td { padding: 2px 4px; vertical-align: top; }
+    #popup td:first-child { color: #666; white-space: nowrap; padding-right: 8px; }
+    #info {
+      position: absolute;
+      bottom: 30px; left: 10px;
+      background: rgba(255,255,255,.9);
+      border-radius: 4px;
+      padding: 6px 10px;
+      font-size: 12px;
+      color: #555;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .legend-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .legend-swatch {
+      width: 14px; height: 14px;
+      border-radius: 2px;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    .legend-swatch.precise {
+      background: #90caf9;
+      border: 1.5px solid #1565c0;
+    }
+    .legend-swatch.approx {
+      background: #b0bec5;
+      border: 1.5px dashed #607d8b;
+    }
+    #approx-toggle-label {
+      cursor: pointer;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div id="popup">
+  <div id="popup-warning">⚠ 近似位置 — 実際と異なる場合があります</div>
+  <h3 id="popup-title">Parcel</h3>
+  <table id="popup-table"></table>
+</div>
+<div id="info">
+  <span>台東区 登記所備付地図データ</span>
+  <span class="legend-chip"><span class="legend-swatch precise"></span> 正確位置</span>
+  <label id="approx-toggle-label" class="legend-chip">
+    <input type="checkbox" id="approx-toggle" checked>
+    <span class="legend-swatch approx"></span>
+    近似位置 (約51,800宗地)
+  </label>
+  <span>| Click a parcel for details</span>
+</div>
+
+<script>
+  // Register PMTiles protocol with MapLibre
+  const protocol = new pmtiles.Protocol();
+  maplibregl.addProtocol("pmtiles", protocol.tile.bind(protocol));
+
+  const map = new maplibregl.Map({
+    container: "map",
+    style: {
+      version: 8,
+      glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+      sources: {
+        carto: {
+          type: "raster",
+          tiles: [
+            "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+            "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+            "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
+          ],
+          tileSize: 256,
+          attribution: "© OpenStreetMap contributors © CARTO"
+        }
+      },
+      layers: [{ id: "carto", type: "raster", source: "carto" }]
+    },
+    center: [139.777523, 35.712728],
+    zoom: 15
+  });
+
+  map.addControl(new maplibregl.NavigationControl());
+  map.addControl(new maplibregl.ScaleControl());
+
+  map.on("load", () => {
+    // ── Approximate layer (arbitrary-CRS parcels, translate-only placement) ──
+    map.addSource("approx", {
+      type: "vector",
+      url: "pmtiles://approximate.pmtiles"
+    });
+
+    map.addLayer({
+      id: "approx-fill",
+      type: "fill",
+      source: "approx",
+      "source-layer": "parcels_approx",
+      paint: {
+        "fill-color": "#b0bec5",
+        "fill-opacity": 0.2
+      }
+    });
+
+    map.addLayer({
+      id: "approx-line",
+      type: "line",
+      source: "approx",
+      "source-layer": "parcels_approx",
+      paint: {
+        "line-color": "#607d8b",
+        "line-width": 0.8,
+        "line-dasharray": [3, 2]
+      }
+    });
+
+    map.addLayer({
+      id: "approx-hover",
+      type: "fill",
+      source: "approx",
+      "source-layer": "parcels_approx",
+      paint: {
+        "fill-color": "#ff6f00",
+        "fill-opacity": 0.5
+      },
+      filter: ["==", "parcel_id", ""]
+    });
+
+    // ── Precise layer (georeferenced parcels) ──
+    map.addSource("cadastral", {
+      type: "vector",
+      url: "pmtiles://cadastral.pmtiles"
+    });
+
+    // Fill layer
+    map.addLayer({
+      id: "parcels-fill",
+      type: "fill",
+      source: "cadastral",
+      "source-layer": "parcels",
+      paint: {
+        "fill-color": [
+          "match", ["get", "accuracy_class"],
+          "甲一", "#4fc3f7",
+          "甲二", "#81c784",
+          "乙",   "#ffb74d",
+          "#90caf9"
+        ],
+        "fill-opacity": 0.35
+      }
+    });
+
+    // Outline layer
+    map.addLayer({
+      id: "parcels-line",
+      type: "line",
+      source: "cadastral",
+      "source-layer": "parcels",
+      paint: {
+        "line-color": "#1565c0",
+        "line-width": 1.2
+      }
+    });
+
+    // Highlight on hover
+    map.addLayer({
+      id: "parcels-hover",
+      type: "fill",
+      source: "cadastral",
+      "source-layer": "parcels",
+      paint: {
+        "fill-color": "#ff6f00",
+        "fill-opacity": 0.5
+      },
+      filter: ["==", "parcel_id", ""]
+    });
+
+    // Lot number labels (visible at zoom 17+)
+    map.addLayer({
+      id: "parcels-label",
+      type: "symbol",
+      source: "cadastral",
+      "source-layer": "parcels",
+      minzoom: 16,
+      layout: {
+        "text-field": ["get", "lot_number"],
+        "text-size": 11,
+        "text-allow-overlap": false
+      },
+      paint: {
+        "text-color": "#1a237e",
+        "text-halo-color": "white",
+        "text-halo-width": 1.5
+      }
+    });
+
+    // ── Popup helper ──
+    function showPopup(p, isApprox) {
+      const popup = document.getElementById("popup");
+      const warning = document.getElementById("popup-warning");
+      const title = document.getElementById("popup-title");
+      const table = document.getElementById("popup-table");
+
+      warning.style.display = isApprox ? "block" : "none";
+
+      const address = [p.district_name, p.chome_name].filter(Boolean).join("");
+      title.textContent = `地番: ${p.lot_number || "—"}  ${address}`;
+
+      const rows = [
+        ["市区町村",   p.city_name],
+        ["大字",       p.district_name],
+        ["丁目",       p.chome_name],
+        ["地番",       p.lot_number],
+        ["精度区分",   p.accuracy_class],
+        ["座標値種別", p.coord_type],
+        ["図郭名",     p.map_name],
+        ["ファイル",   p.source_file],
+      ];
+
+      table.innerHTML = rows
+        .filter(([, v]) => v)
+        .map(([k, v]) => `<tr><td>${k}</td><td><b>${v}</b></td></tr>`)
+        .join("");
+
+      popup.style.display = "block";
+    }
+
+    // ── Unified hover: precise takes priority over approximate ──
+    // Filter uses parcel_id + source_file together because parcel_id values like
+    // "H000000001" repeat across different XML files — source_file makes it unique.
+    let hovered = { preciseId: null, preciseSrc: null, approxId: null, approxSrc: null };
+
+    function clearPreciseHover() {
+      if (hovered.preciseId !== null) {
+        map.setFilter("parcels-hover", ["==", "parcel_id", ""]);
+        hovered.preciseId = null;
+        hovered.preciseSrc = null;
+      }
+    }
+    function clearApproxHover() {
+      if (hovered.approxId !== null) {
+        map.setFilter("approx-hover", ["==", "parcel_id", ""]);
+        hovered.approxId = null;
+        hovered.approxSrc = null;
+      }
+    }
+
+    map.on("mousemove", (e) => {
+      const precise = map.queryRenderedFeatures(e.point, { layers: ["parcels-fill"] });
+      const approx  = map.queryRenderedFeatures(e.point, { layers: ["approx-fill"] });
+
+      if (precise.length > 0) {
+        const { parcel_id: id, source_file: src } = precise[0].properties;
+        if (id !== hovered.preciseId || src !== hovered.preciseSrc) {
+          map.setFilter("parcels-hover", ["all",
+            ["==", "parcel_id",   id],
+            ["==", "source_file", src]
+          ]);
+          hovered.preciseId  = id;
+          hovered.preciseSrc = src;
+        }
+        clearApproxHover();
+        map.getCanvas().style.cursor = "pointer";
+      } else if (approx.length > 0) {
+        const { parcel_id: id, source_file: src } = approx[0].properties;
+        if (id !== hovered.approxId || src !== hovered.approxSrc) {
+          map.setFilter("approx-hover", ["all",
+            ["==", "parcel_id",   id],
+            ["==", "source_file", src]
+          ]);
+          hovered.approxId  = id;
+          hovered.approxSrc = src;
+        }
+        clearPreciseHover();
+        map.getCanvas().style.cursor = "pointer";
+      } else {
+        clearPreciseHover();
+        clearApproxHover();
+        map.getCanvas().style.cursor = "";
+      }
+    });
+
+    // ── Unified click: precise takes priority over approximate ──
+    map.on("click", (e) => {
+      const precise = map.queryRenderedFeatures(e.point, { layers: ["parcels-fill"] });
+      if (precise.length > 0) {
+        showPopup(precise[0].properties, false);
+        return;
+      }
+      const approx = map.queryRenderedFeatures(e.point, { layers: ["approx-fill"] });
+      if (approx.length > 0) {
+        showPopup(approx[0].properties, true);
+        return;
+      }
+      document.getElementById("popup").style.display = "none";
+    });
+
+    // ── Layer toggle ──
+    document.getElementById("approx-toggle").addEventListener("change", (e) => {
+      const vis = e.target.checked ? "visible" : "none";
+      ["approx-fill", "approx-line", "approx-hover"].forEach(id => {
+        map.setLayoutProperty(id, "visibility", vis);
+      });
+    });
+  });
+</script>
+</body>
+</html>

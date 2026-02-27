@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>地籍宗地一覧</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: sans-serif; font-size: 13px; background: #f0f2f5;
+      color: #333; height: 100vh; display: flex; flex-direction: column;
+    }
+
+    /* ── header ── */
+    header {
+      background: #1a237e; color: white;
+      padding: 0 16px; height: 46px; flex-shrink: 0;
+      display: flex; align-items: center; gap: 12px;
+    }
+    header h1 { font-size: 14px; font-weight: 600; white-space: nowrap; }
+    #search {
+      flex: 1; max-width: 360px; padding: 5px 10px;
+      border-radius: 4px; border: none; font-size: 13px;
+    }
+    .nav-link {
+      color: rgba(255,255,255,.75); text-decoration: none;
+      font-size: 12px; white-space: nowrap;
+    }
+    .nav-link:hover { color: white; }
+
+    /* ── breadcrumb bar (shown only in map detail view) ── */
+    #breadcrumb {
+      display: none;
+      background: #e8eaf6; border-bottom: 1px solid #c5cae9;
+      padding: 0 16px; height: 36px; flex-shrink: 0;
+      align-items: center; gap: 8px; font-size: 12px;
+    }
+    #breadcrumb.visible { display: flex; }
+    #bc-back {
+      display: flex; align-items: center; gap: 5px;
+      color: #1a237e; font-weight: 600; cursor: pointer;
+      padding: 4px 10px; border-radius: 4px;
+      border: 1px solid #9fa8da; background: white;
+      font-size: 12px; white-space: nowrap;
+      transition: background .12s;
+    }
+    #bc-back:hover { background: #e8eaf6; }
+    #bc-sep { color: #9fa8da; }
+    #bc-name { color: #3949ab; font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #bc-badges { display: flex; gap: 6px; flex-shrink: 0; }
+
+    /* ── badges ── */
+    .badge {
+      display: inline-block; padding: 2px 7px; border-radius: 10px;
+      font-size: 11px; font-weight: 600;
+    }
+    .badge-geo { background: #e8f5e9; color: #2e7d32; }
+    .badge-arb { background: #fff3e0; color: #bf360c; }
+    .badge-cnt { background: #e8eaf6; color: #283593; }
+
+    /* ── maps list ── */
+    #view-maps { flex: 1; overflow-y: auto; padding: 14px 16px; }
+    #maps-count { margin-bottom: 10px; color: #666; font-size: 12px; }
+    #maps-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px;
+    }
+    .map-card {
+      background: white; border-radius: 8px; padding: 12px 14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.1); cursor: pointer;
+      border: 2px solid transparent; transition: border-color .15s, box-shadow .15s;
+    }
+    .map-card:hover { border-color: #3949ab; box-shadow: 0 3px 8px rgba(0,0,0,.15); }
+    .map-card-title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+    .map-card-src { font-size: 11px; color: #999; margin-bottom: 8px; }
+    .map-card-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .map-districts { font-size: 11px; color: #888; margin-top: 5px; }
+
+    /* ── map detail ── */
+    #view-map { flex: 1; display: none; flex-direction: column; overflow: hidden; }
+
+    #split { flex: 1; display: flex; overflow: hidden; }
+
+    /* SVG panel */
+    #svg-panel {
+      flex: 1; background: #eceff1; position: relative; overflow: hidden;
+      cursor: grab; user-select: none;
+    }
+    #svg-panel:active { cursor: grabbing; }
+    #svg-viewer { width: 100%; height: 100%; display: block; }
+    #svg-hint {
+      position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,.4); color: white; padding: 4px 10px;
+      border-radius: 12px; font-size: 11px; pointer-events: none;
+      white-space: nowrap;
+    }
+
+    /* Right panel */
+    #right-panel {
+      width: 320px; flex-shrink: 0; display: flex; flex-direction: column;
+      border-left: 1px solid #ddd; background: white; position: relative;
+    }
+    #parcel-filter {
+      padding: 8px; border-bottom: 1px solid #eee; flex-shrink: 0;
+    }
+    #parcel-filter input {
+      width: 100%; padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px;
+      font-size: 12px;
+    }
+    #parcel-count-bar {
+      padding: 4px 10px; font-size: 11px; color: #888;
+      border-bottom: 1px solid #eee; flex-shrink: 0;
+    }
+    #parcel-list { flex: 1; overflow-y: auto; }
+
+    .pitem {
+      display: flex; gap: 8px; padding: 7px 10px;
+      border-bottom: 1px solid #f5f5f5; cursor: pointer; align-items: center;
+    }
+    .pitem:hover { background: #f5f7ff; }
+    .pitem.sel { background: #fff8e1; border-left: 3px solid #ff6f00; }
+    .pthumb {
+      width: 44px; height: 44px; flex-shrink: 0; background: #e3f2fd;
+      border-radius: 4px; overflow: hidden;
+    }
+    .pmeta { flex: 1; min-width: 0; }
+    .plot  { font-weight: 600; font-size: 13px; }
+    .paddr { font-size: 11px; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pacc  { font-size: 11px; margin-top: 1px; }
+    .acc-1 { color: #1565c0; } .acc-2 { color: #2e7d32; } .acc-3 { color: #e65100; }
+
+    #pagination {
+      padding: 6px; border-top: 1px solid #eee; display: flex;
+      gap: 4px; justify-content: center; flex-wrap: wrap; flex-shrink: 0;
+    }
+    .pbtn {
+      padding: 3px 8px; border: 1px solid #ccc; border-radius: 3px;
+      background: white; cursor: pointer; font-size: 12px; min-width: 28px;
+    }
+    .pbtn.cur { background: #1a237e; color: white; border-color: #1a237e; }
+    .pbtn:hover:not(.cur) { background: #e8eaf6; }
+
+    /* Detail panel – slides up from bottom of right panel */
+    #detail-box {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      background: white; border-top: 2px solid #3949ab;
+      box-shadow: 0 -4px 12px rgba(0,0,0,.12);
+      display: none; flex-direction: column;
+      max-height: 55%;
+    }
+    #detail-box.open { display: flex; }
+    #detail-header {
+      display: flex; align-items: center; padding: 8px 10px;
+      background: #3949ab; color: white; flex-shrink: 0;
+    }
+    #detail-title { flex: 1; font-weight: 600; font-size: 13px; }
+    #detail-close {
+      background: none; border: none; color: white; font-size: 18px;
+      cursor: pointer; line-height: 1; padding: 0 4px; opacity: .8;
+    }
+    #detail-close:hover { opacity: 1; }
+    #detail-body {
+      padding: 10px; font-size: 12px; overflow-y: auto;
+    }
+    #detail-body table { border-collapse: collapse; width: 100%; }
+    #detail-body td { padding: 3px 6px; border-bottom: 1px solid #f0f0f0; }
+    #detail-body td:first-child { color: #888; white-space: nowrap; width: 74px; }
+    #detail-body tr:last-child td { border-bottom: none; }
+
+    .loading {
+      display: flex; align-items: center; justify-content: center;
+      height: 100%; color: #999; font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>台東区 地籍一覧</h1>
+  <input id="search" type="search" placeholder="地図名・大字で検索…" autocomplete="off">
+  <a class="nav-link" href="/viewer/index.html">地理地図 →</a>
+</header>
+
+<!-- Breadcrumb (map detail navigation) -->
+<nav id="breadcrumb">
+  <button id="bc-back">&#8592; 地図一覧へ戻る</button>
+  <span id="bc-sep">›</span>
+  <span id="bc-name"></span>
+  <div id="bc-badges"></div>
+</nav>
+
+<!-- Maps list -->
+<div id="view-maps">
+  <div id="maps-count"></div>
+  <div id="maps-grid"></div>
+</div>
+
+<!-- Map detail -->
+<div id="view-map">
+  <div id="split">
+
+    <div id="svg-panel">
+      <svg id="svg-viewer" xmlns="http://www.w3.org/2000/svg">
+        <g id="svg-root"></g>
+      </svg>
+      <div id="svg-hint">スクロール: ズーム &nbsp; ドラッグ: 移動</div>
+    </div>
+
+    <div id="right-panel">
+      <div id="parcel-filter">
+        <input id="parcel-q" type="search" placeholder="地番・大字で絞り込み…" autocomplete="off">
+      </div>
+      <div id="parcel-count-bar"></div>
+      <div id="parcel-list"><div class="loading">読み込み中…</div></div>
+      <div id="pagination"></div>
+
+      <!-- Detail overlay (inside right-panel for positioning) -->
+      <div id="detail-box">
+        <div id="detail-header">
+          <span id="detail-title"></span>
+          <button id="detail-close" title="閉じる">&#x2715;</button>
+        </div>
+        <div id="detail-body"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── constants ─────────────────────────────────────────────────────────────────
+const PAGE = 60;
+
+// ── state ─────────────────────────────────────────────────────────────────────
+let index   = [];
+let mapData = null;
+let filtered = [];
+let page = 0;
+let selId = null;
+let svgBB = null;
+
+// ── boot ──────────────────────────────────────────────────────────────────────
+(async () => {
+  try {
+    index = await fetchJSON('/output/maps_index.json');
+    renderMapsGrid('');
+  } catch (e) {
+    document.getElementById('maps-count').textContent = 'エラー: ' + e.message;
+  }
+})();
+
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+// ── maps list ─────────────────────────────────────────────────────────────────
+function renderMapsGrid(q) {
+  q = q.toLowerCase().trim();
+  const shown = q
+    ? index.filter(m =>
+        m.map_name.toLowerCase().includes(q) ||
+        m.src.toLowerCase().includes(q) ||
+        m.districts.some(d => d.includes(q))
+      )
+    : index;
+
+  const total = index.reduce((s, m) => s + m.count, 0);
+  document.getElementById('maps-count').textContent =
+    `${shown.length} 件 / 全 ${index.length} 件（合計 ${total.toLocaleString()} 宗地）`;
+
+  document.getElementById('maps-grid').innerHTML = shown.map(m => `
+    <div class="map-card" onclick="openMap('${m.key}')">
+      <div class="map-card-title">${m.map_name || '(無題)'}</div>
+      <div class="map-card-src">${m.src}</div>
+      <div class="map-card-meta">
+        <span class="badge badge-cnt">${m.count.toLocaleString()} 宗地</span>
+        <span class="badge ${m.is_geo ? 'badge-geo' : 'badge-arb'}">
+          ${m.is_geo ? '公共座標' : '任意座標'}
+        </span>
+      </div>
+      <div class="map-districts">${m.districts.slice(0, 5).join('・')}</div>
+    </div>
+  `).join('');
+}
+
+// ── open map ──────────────────────────────────────────────────────────────────
+async function openMap(key) {
+  document.getElementById('parcel-list').innerHTML = '<div class="loading">読み込み中…</div>';
+  document.getElementById('svg-root').innerHTML = '';
+  dismissDetail();
+  selId = null;
+
+  try {
+    mapData = await fetchJSON(`/output/maps/${key}.json`);
+  } catch (e) {
+    alert('読み込み失敗: ' + e.message);
+    return;
+  }
+
+  // Show map detail view
+  document.getElementById('view-maps').style.display = 'none';
+  document.getElementById('view-map').style.display = 'flex';
+  document.getElementById('search').value = '';
+  document.getElementById('search').placeholder = '地図名・大字で検索…';
+
+  // Show breadcrumb
+  document.getElementById('breadcrumb').classList.add('visible');
+  document.getElementById('bc-name').textContent = mapData.map_name || key;
+  document.getElementById('bc-badges').innerHTML = `
+    <span class="badge ${mapData.is_geo ? 'badge-geo' : 'badge-arb'}">
+      ${mapData.is_geo ? '公共座標' : '任意座標'}
+    </span>
+    <span class="badge badge-cnt">${mapData.parcels.length.toLocaleString()} 宗地</span>
+    ${mapData.is_geo
+      ? '<a href="/viewer/index.html" class="nav-link" style="color:#1a237e;font-weight:600">地図で確認 →</a>'
+      : ''}
+  `;
+
+  filterAndRender();
+  buildSVG();
+}
+
+// ── go back ───────────────────────────────────────────────────────────────────
+function goBack() {
+  document.getElementById('view-map').style.display = 'none';
+  document.getElementById('view-maps').style.display = '';
+  document.getElementById('breadcrumb').classList.remove('visible');
+  mapData = null;
+  selId = null;
+  dismissDetail();
+  renderMapsGrid(document.getElementById('search').value);
+}
+
+document.getElementById('bc-back').addEventListener('click', goBack);
+
+// ── SVG ───────────────────────────────────────────────────────────────────────
+// MOJ: X=northing, Y=easting → SVG: x=east(right), y=−northing(north-up)
+function computeBB(parcels) {
+  let mnX = Infinity, mxX = -Infinity, mnY = Infinity, mxY = -Infinity;
+  for (const p of parcels)
+    for (const [x, y] of p.ext) {
+      if (x < mnX) mnX = x; if (x > mxX) mxX = x;
+      if (y < mnY) mnY = y; if (y > mxY) mxY = y;
+    }
+  return { minX: mnX, maxX: mxX, minY: mnY, maxY: mxY };
+}
+
+function toSVG(x, y, bb) {
+  return [y - bb.minY, bb.maxX - x];
+}
+
+function makePath(parcel, bb) {
+  const pts = parcel.ext.map(([x, y]) => toSVG(x, y, bb));
+  if (pts.length < 3) return '';
+  return 'M' + pts.map(p => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join('L') + 'Z';
+}
+
+let pan = { tx: 0, ty: 0, sc: 1 };
+
+function applyTransform() {
+  document.getElementById('svg-root').setAttribute(
+    'transform', `translate(${pan.tx},${pan.ty}) scale(${pan.sc})`
+  );
+}
+
+function buildSVG() {
+  const parcels = mapData.parcels;
+  svgBB = computeBB(parcels);
+  const bb = svgBB;
+  const W = bb.maxY - bb.minY;
+  const H = bb.maxX - bb.minX;
+
+  const root = document.getElementById('svg-root');
+  root.innerHTML = '';
+  const ns = 'http://www.w3.org/2000/svg';
+
+  for (const p of parcels) {
+    const d = makePath(p, bb);
+    if (!d) continue;
+    const el = document.createElementNS(ns, 'path');
+    el.setAttribute('d', d);
+    el.setAttribute('data-id', p.id);
+    el.setAttribute('vector-effect', 'non-scaling-stroke');
+    el.style.cssText =
+      'fill:#90caf9;fill-opacity:.45;stroke:#1565c0;stroke-width:1.2px;cursor:pointer';
+    el.addEventListener('click', () => selectParcel(p.id));
+    el.addEventListener('mouseenter', () => {
+      if (p.id !== selId) el.style.fillOpacity = '.75';
+    });
+    el.addEventListener('mouseleave', () => {
+      if (p.id !== selId) el.style.fillOpacity = '.45';
+    });
+    root.appendChild(el);
+  }
+
+  const panel = document.getElementById('svg-panel');
+  const pw = panel.clientWidth || 600;
+  const ph = panel.clientHeight || 500;
+  const sc = Math.min(pw / W, ph / H) * 0.94;
+  pan = { tx: (pw - W * sc) / 2, ty: (ph - H * sc) / 2, sc };
+  applyTransform();
+}
+
+// ── parcel list ───────────────────────────────────────────────────────────────
+function filterAndRender() {
+  const q = (document.getElementById('parcel-q').value || '').trim();
+  filtered = q
+    ? mapData.parcels.filter(p =>
+        p.lot.includes(q) || p.district.includes(q) ||
+        p.chome.includes(q) || p.id.includes(q)
+      )
+    : mapData.parcels;
+  page = 0;
+  renderList();
+}
+
+function renderList() {
+  const start = page * PAGE;
+  const slice = filtered.slice(start, start + PAGE);
+  const total = filtered.length;
+
+  document.getElementById('parcel-count-bar').textContent =
+    `${total.toLocaleString()} 件  (${start + 1}–${Math.min(start + PAGE, total)})`;
+
+  document.getElementById('parcel-list').innerHTML = slice.map(p => {
+    const thumb   = thumbSVG(p);
+    const addr    = [p.district, p.chome].filter(Boolean).join(' ');
+    const accCls  = p.acc === '甲一' ? 'acc-1' : p.acc === '甲二' ? 'acc-2' : 'acc-3';
+    const isSel   = p.id === selId ? ' sel' : '';
+    return `<div class="pitem${isSel}" data-id="${p.id}" onclick="selectParcel('${p.id}')">
+      <div class="pthumb">${thumb}</div>
+      <div class="pmeta">
+        <div class="plot">地番 ${p.lot || '—'}</div>
+        <div class="paddr">${addr || p.id}</div>
+        <div class="pacc ${accCls}">${p.acc || ''}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  renderPagination(total);
+}
+
+function thumbSVG(p) {
+  const ext = p.ext;
+  if (ext.length < 3) return '';
+  const xs = ext.map(e => e[1]);
+  const ys = ext.map(e => -e[0]);
+  const mnx = Math.min(...xs), mxx = Math.max(...xs);
+  const mny = Math.min(...ys), mxy = Math.max(...ys);
+  const sc = 90 / (Math.max(mxx - mnx, mxy - mny) || 1);
+  const pts = xs.map((x, i) => [(x - mnx) * sc + 5, (ys[i] - mny) * sc + 5]);
+  const d = 'M' + pts.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join('L') + 'Z';
+  return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" width="44" height="44">
+    <path d="${d}" fill="#90caf9" fill-opacity=".65" stroke="#1565c0" stroke-width="2"/>
+  </svg>`;
+}
+
+function renderPagination(total) {
+  const pages = Math.ceil(total / PAGE);
+  if (pages <= 1) { document.getElementById('pagination').innerHTML = ''; return; }
+  let html = '';
+  for (let i = 0; i < pages; i++) {
+    if (i === 0 || i === pages - 1 || Math.abs(i - page) <= 2) {
+      html += `<button class="pbtn${i === page ? ' cur' : ''}" onclick="goPage(${i})">${i + 1}</button>`;
+    } else if (Math.abs(i - page) === 3) {
+      html += `<span style="color:#bbb;line-height:22px">…</span>`;
+    }
+  }
+  document.getElementById('pagination').innerHTML = html;
+}
+
+function goPage(n) { page = n; renderList(); }
+
+// ── select parcel ─────────────────────────────────────────────────────────────
+function selectParcel(id) {
+  // Reset previous selection
+  if (selId) {
+    const prevPath = document.querySelector(`path[data-id="${selId}"]`);
+    if (prevPath) { prevPath.style.fill = '#90caf9'; prevPath.style.fillOpacity = '.45'; }
+  }
+  document.querySelectorAll('.pitem.sel').forEach(el => el.classList.remove('sel'));
+
+  selId = id;
+
+  // Highlight SVG path
+  const svgEl = document.querySelector(`path[data-id="${id}"]`);
+  if (svgEl) {
+    svgEl.style.fill = '#ff6f00'; svgEl.style.fillOpacity = '.65';
+    svgEl.parentNode.appendChild(svgEl);
+  }
+
+  // Highlight list item & scroll into view
+  const li = document.querySelector(`.pitem[data-id="${id}"]`);
+  if (li) { li.classList.add('sel'); li.scrollIntoView({ block: 'nearest' }); }
+
+  // Show detail panel
+  const p = mapData.parcels.find(x => x.id === id);
+  if (p) showDetail(p);
+}
+
+// ── detail panel ──────────────────────────────────────────────────────────────
+function showDetail(p) {
+  const addr = [p.district, p.chome].filter(Boolean).join(' ');
+  document.getElementById('detail-title').textContent =
+    `地番 ${p.lot || '—'}　${addr}`;
+  document.getElementById('detail-body').innerHTML = `
+    <table>
+      <tr><td>筆ID</td><td>${p.id}</td></tr>
+      <tr><td>大字</td><td>${p.district || '—'}</td></tr>
+      <tr><td>丁目</td><td>${p.chome || '—'}</td></tr>
+      <tr><td>精度区分</td><td>${p.acc || '—'}</td></tr>
+      <tr><td>座標種別</td><td>${p.coord || '—'}</td></tr>
+      <tr><td>頂点数</td><td>${p.ext.length}</td></tr>
+    </table>`;
+  document.getElementById('detail-box').classList.add('open');
+}
+
+function dismissDetail() {
+  document.getElementById('detail-box').classList.remove('open');
+  if (selId) {
+    const prevPath = document.querySelector(`path[data-id="${selId}"]`);
+    if (prevPath) { prevPath.style.fill = '#90caf9'; prevPath.style.fillOpacity = '.45'; }
+    document.querySelectorAll('.pitem.sel').forEach(el => el.classList.remove('sel'));
+  }
+  selId = null;
+}
+
+document.getElementById('detail-close').addEventListener('click', dismissDetail);
+
+// ── pan / zoom ────────────────────────────────────────────────────────────────
+const svgPanel = document.getElementById('svg-panel');
+let drag = false, dragOrigin = null, panOrigin = null;
+
+svgPanel.addEventListener('mousedown', e => {
+  drag = true;
+  dragOrigin = { x: e.clientX, y: e.clientY };
+  panOrigin  = { ...pan };
+});
+window.addEventListener('mouseup', () => { drag = false; });
+window.addEventListener('mousemove', e => {
+  if (!drag) return;
+  pan.tx = panOrigin.tx + (e.clientX - dragOrigin.x);
+  pan.ty = panOrigin.ty + (e.clientY - dragOrigin.y);
+  applyTransform();
+});
+svgPanel.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = svgPanel.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const f = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  pan.tx = mx + (pan.tx - mx) * f;
+  pan.ty = my + (pan.ty - my) * f;
+  pan.sc *= f;
+  applyTransform();
+}, { passive: false });
+
+// ── global search (maps list only) ───────────────────────────────────────────
+document.getElementById('search').addEventListener('input', e => {
+  if (mapData) return;
+  renderMapsGrid(e.target.value);
+});
+
+document.getElementById('parcel-q').addEventListener('input', filterAndRender);
+</script>
+</body>
+</html>
