@@ -1,4 +1,5 @@
 # 登記所備付地図データ ビューアー / Cadastral Map Viewer
+<img width="1895" height="921" alt="image" src="https://github.com/user-attachments/assets/aa32e794-d0b0-462d-bd61-05c4e7800ee2" />
 
 法務省 登記所備付地図データ（地図XML）を SpatiaLite・PMTiles に変換し、
 MapLibre GL JS でブラウザ表示するツールセットです。
